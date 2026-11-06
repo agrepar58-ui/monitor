@@ -1,0 +1,82 @@
+<!doctype html><html lang="bn"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CAMERA MONITOR PRO — Consent</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:20px;background:#101827;color:#f4f7fb;font-family:system-ui,Arial}
+main{max-width:680px;margin:auto}.card{background:#1d2a3d;border:1px solid #34445c;border-radius:17px;padding:20px;margin-top:16px}
+h1{color:#7bb8ff}button{font:inherit;padding:13px 16px;border:0;border-radius:10px;margin:6px 3px;background:#397fe5;color:white}
+.stop{background:#c34545}video{width:100%;max-height:420px;background:#05080d;border-radius:12px}.small{color:#b9c6d8}
+</style></head><body><main>
+<h1>📷 CAMERA MONITOR PRO</h1><section class="card">
+<h2>ক্যামেরা ও ছবি শেয়ারের স্পষ্ট সম্মতি</h2>
+<p>তুমি সম্মতি দিয়ে শুরু করলে:</p>
+<ul><li>তোমার ক্যামেরার লাইভ ভিডিও লিংক তৈরি করা অ্যাডমিন দেখতে পারবেন।</li>
+<li>তুমি চালু রাখলে প্রতি সেকেন্ডে সর্বোচ্চ একটি ছবি তোলা ও অ্যাডমিনের সেশনে সংরক্ষণ করা হবে।</li>
+<li>তোমার ডিভাইসের উপলব্ধ ব্রাউজার/প্ল্যাটফর্ম তথ্য অ্যাডমিনকে দেখানো হবে।</li>
+<li>যেকোনো সময় বন্ধ বোতাম চাপলে ক্যামেরা ও ছবি তোলা বন্ধ হবে।</li></ul>
+<p class="small">এই পেজ খোলা মাত্র ক্যামেরা চালু হয় না। শুরু বোতাম ও ব্রাউজারের ক্যামেরা অনুমতি—দুটিই দরকার। ছবি তোলার সময় পেজে দৃশ্যমান কাউন্টার থাকবে।</p>
+<button id="start">আমি বুঝেছি ও সম্মত — শুরু</button><button id="stop" class="stop" disabled>বন্ধ করো</button>
+<p id="status" class="small">বন্ধ আছে।</p><p id="count" class="small">তোলা ছবি: ০</p>
+<video id="preview" autoplay muted playsinline></video>
+<canvas id="canvas" class="small" style="display:none"></canvas>
+</section></main>
+<script src="/socket.io/socket.io.js"></script><script>
+const $=id=>document.getElementById(id),roomId=location.pathname.split("/").pop();
+let stream,socket,pc,photoTimer=null,total=0,photoBusy=false;
+function deviceDetails(){
+ const ua=navigator.userAgent||"";
+ return {platform:navigator.userAgentData?.platform||navigator.platform||"তথ্য পাওয়া যায়নি",
+ browserUserAgent:ua,language:navigator.language||"unknown",
+ screen:`${screen.width}x${screen.height}`,
+ deviceMemoryGB:navigator.deviceMemory||"সমর্থিত নয়",
+ hardwareConcurrency:navigator.hardwareConcurrency||"সমর্থিত নয়",
+ note:"নির্দিষ্ট ফোন মডেল/Android সংস্করণ ব্রাউজার গোপন রাখতে পারে।"};
+}
+$("start").onclick=async()=>{
+ $("start").disabled=true;
+ try{
+  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user"},audio:false});
+  $("preview").srcObject=stream;
+  socket=io({auth:{role:"visitor",roomId}});
+  socket.on("connect",()=>{
+   socket.emit("device-info",deviceDetails());
+   $("status").textContent="লাইভ শেয়ার চলছে। প্রতি সেকেন্ডে ছবি তোলা হচ্ছে।";
+   $("stop").disabled=false;
+   photoTimer=setInterval(takePhoto,1000);
+  });
+  socket.on("connect_error",()=>stopAll("সার্ভারের সঙ্গে সংযোগ ব্যর্থ।"));
+  socket.on("join-error",m=>stopAll(m));
+  socket.on("room-ended",()=>stopAll("অ্যাডমিন সেশন বন্ধ করেছেন।"));
+  socket.on("signal",async data=>{
+   try{
+    if(data.type==="offer"){
+     if(pc)pc.close();pc=new RTCPeerConnection({iceServers:[{urls:"stun:stun.l.google.com:19302"}]});
+     stream.getTracks().forEach(t=>pc.addTrack(t,stream));
+     pc.onicecandidate=e=>{if(e.candidate)socket.emit("signal",e.candidate);};
+     await pc.setRemoteDescription(data);const answer=await pc.createAnswer();
+     await pc.setLocalDescription(answer);socket.emit("signal",pc.localDescription);
+    }else if(data.candidate&&pc)await pc.addIceCandidate(data);
+   }catch(e){$("status").textContent="লাইভ সংযোগে সমস্যা।";}
+  });
+ }catch(e){$("status").textContent="ক্যামেরা চালু হয়নি। HTTPS ও ক্যামেরা অনুমতি পরীক্ষা করো।";$("start").disabled=false;}
+};
+function takePhoto(){
+ if(!stream||!socket?.connected||photoBusy)return;
+ const video=$("preview");if(video.readyState<2||!video.videoWidth)return;
+ photoBusy=true;
+ const canvas=$("canvas");canvas.width=Math.min(video.videoWidth,960);
+ canvas.height=Math.round(video.videoHeight*canvas.width/video.videoWidth);
+ const ctx=canvas.getContext("2d");ctx.drawImage(video,0,0,canvas.width,canvas.height);
+ const data=canvas.toDataURL("image/jpeg",0.65);
+ socket.emit("photo",data);total++;$("count").textContent="তোলা ছবি: "+total+" (প্রতি সেকেন্ডে সর্বোচ্চ ১টি)";
+ photoBusy=false;
+}
+function stopAll(msg="তুমি শেয়ার বন্ধ করেছ।"){
+ if(photoTimer)clearInterval(photoTimer);photoTimer=null;
+ if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;
+ if(pc)pc.close();pc=null;
+ if(socket){if(socket.connected)socket.emit("stop-sharing");socket.disconnect();socket=null;}
+ $("preview").srcObject=null;$("status").textContent=msg;$("start").disabled=false;$("stop").disabled=true;
+}
+$("stop").onclick=()=>stopAll();
+</script></body></html>

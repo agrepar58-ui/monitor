@@ -1,0 +1,52 @@
+<!doctype html><html lang="bn"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CAMERA MONITOR PRO</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:20px;background:#101827;color:#f4f7fb;font-family:system-ui,Arial}
+main{max-width:850px;margin:auto}.card{background:#1d2a3d;border:1px solid #34445c;border-radius:17px;padding:18px;margin:15px 0}
+h1{color:#7bb8ff}button,input{font:inherit;padding:12px;border:0;border-radius:9px;margin:5px 3px}
+button{background:#397fe5;color:white}button.red{background:#c34545}video{width:100%;max-height:430px;background:#05080d;border-radius:12px}
+.small{color:#b9c6d8}.hidden{display:none}.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px}
+.gallery img{width:100%;border-radius:10px}.gallery a{color:#a9ceff}
+</style></head><body><main>
+<h1>📷 CAMERA MONITOR PRO</h1>
+<p class="small">সম্মতিভিত্তিক লাইভ ক্যামেরা ও ফটো গ্যালারি</p>
+<section class="card" id="login"><h2>অ্যাডমিন লগইন</h2>
+<input id="pin" type="password" placeholder="গোপন Admin PIN"><button id="loginBtn">লগইন</button><p id="loginMsg" class="small"></p></section>
+<section class="card hidden" id="panel">
+<h2>শেয়ার সেশন</h2><button id="newBtn">নতুন সম্মতি লিংক তৈরি</button>
+<p id="link" class="small"></p><button id="copyBtn" class="hidden">লিংক কপি</button>
+<h3>লাইভ ক্যামেরা</h3><video id="live" autoplay playsinline controls></video><p id="status" class="small">অপেক্ষা করছে…</p>
+<div id="device" class="small"></div><button id="endBtn" class="red hidden">সেশন বন্ধ</button>
+</section>
+<section class="card hidden" id="galleryPanel"><h2>সংরক্ষিত ছবি</h2><p class="small">এই সেশনে সম্মতিসহ তোলা ছবি।</p><div id="gallery" class="gallery"></div></section>
+</main>
+<script src="/socket.io/socket.io.js"></script><script>
+const $=id=>document.getElementById(id);let socket,pin,id,pc;
+$("loginBtn").onclick=()=>{
+ pin=$("pin").value;socket=io({auth:{role:"admin",pin}});
+ socket.on("connect",()=>{$("login").classList.add("hidden");$("panel").classList.remove("hidden");$("galleryPanel").classList.remove("hidden");});
+ socket.on("connect_error",()=>{$("loginMsg").textContent="PIN ভুল অথবা সংযোগ ব্যর্থ।";socket.disconnect();});
+ socket.on("visitor-joined",x=>connectPeer(x.id));
+ socket.on("device-info",x=>{if(x.id===id)$("device").textContent="ডিভাইসের উপলব্ধ তথ্য: "+JSON.stringify(x.info,null,2);});
+ socket.on("signal",async x=>{if(x.id!==id||!pc)return;try{if(x.data.type==="answer")await pc.setRemoteDescription(x.data);else if(x.data.candidate)await pc.addIceCandidate(x.data);}catch(e){}});
+ socket.on("new-photo",x=>{const img=document.createElement("img");img.src=x.data;img.alt="Consent-based photo";const a=document.createElement("a");a.href="/private-photo/"+id+"/"+x.filename+"?pin="+encodeURIComponent(pin);a.download=x.filename;a.appendChild(img);$("gallery").prepend(a);$("status").textContent="সংরক্ষিত ছবি: "+x.count;});
+ socket.on("visitor-stopped",()=>reset("ব্যবহারকারী শেয়ার বন্ধ করেছেন।"));
+ socket.on("room-ended",()=>reset("সেশন বন্ধ হয়েছে।"));
+};
+$("newBtn").onclick=()=>{if(pc){pc.close();pc=null;}$("gallery").innerHTML="";$("device").textContent="";
+ socket.emit("create-room",x=>{id=x.id;const url=location.origin+x.url;
+ $("link").innerHTML="ব্যবহারকারীকে এই লিংক পাঠাও: <a id='joinLink' href='"+url+"'>"+url+"</a>";
+ $("copyBtn").classList.remove("hidden");$("endBtn").classList.remove("hidden");$("status").textContent="ব্যবহারকারীর অপেক্ষায়…";});};
+$("copyBtn").onclick=async()=>{try{await navigator.clipboard.writeText($("joinLink").href);$("status").textContent="লিংক কপি হয়েছে।";}catch(e){$("status").textContent="লিংক চেপে ধরে কপি করো।";}};
+async function connectPeer(room){
+ id=room;if(pc)pc.close();pc=new RTCPeerConnection({iceServers:[{urls:"stun:stun.l.google.com:19302"}]});
+ pc.addTransceiver("video",{direction:"recvonly"});
+ pc.ontrack=e=>$("live").srcObject=e.streams[0];
+ pc.onicecandidate=e=>{if(e.candidate)socket.emit("signal",{id,data:e.candidate});};
+ const offer=await pc.createOffer();await pc.setLocalDescription(offer);socket.emit("signal",{id,data:pc.localDescription});
+ $("status").textContent="লাইভ সংযোগ হচ্ছে…";
+}
+function reset(msg){if(pc)pc.close();pc=null;$("live").srcObject=null;$("status").textContent=msg;}
+$("endBtn").onclick=()=>{if(id)socket.emit("end-room",{id});reset("সেশন বন্ধ করেছেন।");id=null;$("endBtn").classList.add("hidden");};
+</script></body></html>
